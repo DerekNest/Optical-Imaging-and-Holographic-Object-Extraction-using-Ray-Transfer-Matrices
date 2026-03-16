@@ -1,0 +1,119 @@
+%% Task 1a: Load and view the raw light field
+clear; 
+clc; 
+close all;
+
+load('lightField.mat');
+rays_in = rays; % The data is a 4xN matrix called 'rays'
+clear rays; % Free up memory, as 'rays' is very large
+
+% Set reasonable sensor parameters
+width = 5 / 1000;  % 5 mm width
+Npixels = 200;     % 200x200 pixels
+
+% Use rays2img to render the raw rays
+% rays_in(1,:) is x-position 
+% rays_in(3,:) is y-position 
+[img_raw, x, y] = rays2img(rays_in(1,:), rays_in(3,:), width, Npixels);
+
+figure;
+imagesc(x, y, img_raw);
+colormap('gray');
+axis image;
+title('Task 1a: Raw lightField.mat Data');
+% We see a blurry image that is similar to figure 8
+
+%% Task 1d: Test propagation in free space
+d = 0.1; % 100 mm (Try a few different values for d)
+
+% Free-space propagation matrix M_d 
+M_d = [
+    1, d, 0, 0;
+    0, 1, 0, 0;
+    0, 0, 1, d;
+    0, 0, 0, 1
+];
+
+% Propagate all rays
+rays_out_d = M_d * rays_in;
+
+% Render the propagated rays
+[img_d, x, y] = rays2img(rays_out_d(1,:), rays_out_d(3,:), width, Npixels);
+
+figure;
+imagesc(x, y, img_d);
+colormap('gray');
+axis image;
+title(sprintf('Task 1d: Propagated by d = %.1f m', d));
+% This is also blurry
+
+%% Task 2: Verbal Explanation about Bluriness
+% Provide a verbal explanation about the observed bluriness
+%
+% We are unable to create a sharp, focused image because the 
+% free-space propagation Matrix M_d only simulates rays traveling in
+straight lines,
+disp('The bluriness observed in the images is likely due to the propagation distance being too large or the lens not being properly focused. Adjusting the focal length or the propagation distance may help achieve a clearer image.');
+
+%% Task 3: Design an imaging system to focus the rays
+disp('Running Task 3: Hunting for focus...');
+
+% Load the rays again if needed
+if ~exist('rays_in', 'var')
+    load('lightField.mat');
+    rays_in = rays;
+    clear rays;
+end
+
+% 1. Choose a fixed focal length for your lens
+f = 0.1; % 100 mm (You can experiment with this value)
+
+% Define the lens matrix M_f 
+M_f = [
+    1, 0, 0, 0;
+    -1/f, 1, 0, 0;
+    0, 0, 1, 0;
+    0, 0, -1/f, 1
+];
+
+% 2. "Hunt" for the focus by trying different d2 distances 
+% We will try 10 distances from 50mm to 200mm
+d2_range = linspace(0.05, 0.2, 10); 
+
+% Sensor parameters
+width = 5 / 1000;
+Npixels = 200;
+
+figure('Name', 'Task 3: Hunting for Focus');
+sgtitle(sprintf('Hunting for focus with f = %.0f mm', f*1000));
+
+for i = 1:length(d2_range)
+    d2 = d2_range(i);
+    fprintf('  Trying d2 = %.3f m...\n', d2);
+    
+    % 3. Define propagation matrix M_d2 [cite: 62]
+    M_d2 = [
+        1, d2, 0, 0;
+        0, 1, 0, 0;
+        0, 0, 1, d2;
+        0, 0, 0, 1
+    ];
+    
+    % 4. Build total system matrix M = M_d2 * M_f
+    % (Rays hit lens, then propagate distance d2)
+    M_total = M_d2 * M_f;
+    
+    % 5. Transform all 3 million rays (this may take a second)
+    rays_final = M_total * rays_in;
+    
+    % 6. Render the image at this d2 distance 
+    [img, x, y] = rays2img(rays_final(1,:), rays_final(3,:), width, Npixels);
+    
+    % 7. Display the image in a subplot
+    subplot(2, 5, i); % Assumes a 2x5 grid for 10 images
+    imagesc(x, y, img);
+    colormap('gray');
+    axis image;
+    set(gca, 'XTick', [], 'YTick', []); % Hide axes ticks
+    title(sprintf('d2 = %.0f mm', d2*1000));
+end

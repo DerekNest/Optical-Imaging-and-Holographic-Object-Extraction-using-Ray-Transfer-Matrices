@@ -1,0 +1,177 @@
+%% ESE 105, Case Study 3, Part 1: Ray Tracing
+
+clear; 
+clc; 
+close all;
+
+%% --- Part 1, Task 1: Ray tracing through free space ---
+disp('Running Part 1, Task 1: Free Space Propagation...');
+
+% --- 1. Define Initial Rays ---
+% Two origin points: (x,y,z) = (0,0,0) mm and (10,0,0) mm
+x1_origin_m = 0;
+x2_origin_m = 10 / 1000; % Convert 10 mm to meters
+
+% 8 rays for each respective point  
+N_rays_per_point = 8;
+N_total_rays = 2 * N_rays_per_point;
+
+% Angles from -pi/20 to pi/20 radians
+theta_x = linspace(-pi/20, pi/20, N_rays_per_point);
+
+% y=0 and theta_y=0 for all rays 
+y_vals = zeros(1, N_total_rays);
+theta_y_vals = zeros(1, N_total_rays);
+
+% Create the 4xN input ray matrix for our newly created variables
+rays_in = [
+    [repmat(x1_origin_m, 1, N_rays_per_point), repmat(x2_origin_m, 1, N_rays_per_point)]; % x1
+    [theta_x, theta_x];                                 % theta_x1
+    y_vals;                                             % y1
+    theta_y_vals                                        % theta_y1
+];
+
+% --- 2. Propagate in Free Space ---
+% From figure 6, .2 m appears to be an adequate choice.
+d1 = 0.2; % meters
+
+% Define free-space propagation matrix M_d (Eq. 7) 
+M_d1 = [
+    1, d1, 0, 0;
+    0, 1, 0, 0;
+    0, 0, 1, d1;
+    0, 0, 0, 1
+];
+
+% Compute the output rays using a single matrix multiplication
+rays_out_task1 = M_d1 * rays_in;
+
+% --- 3. Plot Task 1 Results ---
+figure;
+hold on;
+grid on;
+
+% Create z-matrix for plotting 
+% Row 1: z=0 (start), Row 2: z=d1 (end)
+ray_z = [zeros(1, N_total_rays); repmat(d1, 1, N_total_rays)];
+
+% Create x-matrix for plotting
+% Row 1: x_in, Row 2: x_out
+ray_x = [rays_in(1,:); rays_out_task1(1,:)];
+
+% Plot blue rays (origin x=0)
+plot(ray_z(:, 1:N_rays_per_point), ray_x(:, 1:N_rays_per_point), 'b');
+% Plot red rays (origin x=10mm)
+plot(ray_z(:, (N_rays_per_point+1):end), ray_x(:, (N_rays_per_point+1):end), 'r');
+
+title('Task 1: Ray Propagation in Free Space');
+xlabel('z (m)');
+ylabel('x (m)');
+axis tight; 
+hold off;
+
+
+%% --- Part 1, Task 2: Ray tracing through a finite-sized lens ---
+% --- 1. Define System Parameters ---
+% We use the same 'rays_in' matrix from Task 1.
+
+% Lens parameters
+f = 150 / 1000; % 0.15 m focal length 
+r_lens = 20 / 1000; % 0.02 m radius
+
+% Distances
+% d1 is the distance from object to lens. We use d1 = 0.2 m from Task 1.
+% We must calculate d2 using the thin lens equation (Eq. 11)
+% 1/d1 + 1/d2 = 1/f  =>  d2 = 1 / (1/f - 1/d1)
+d2 = 1 / (1/f - 1/d1);
+
+fprintf('Lens system parameters:\n');
+fprintf('  Focal length f = %.2f m\n', f);
+fprintf('  Lens radius r = %.2f m\n', r_lens);
+fprintf('  Object distance d1 = %.2f m\n', d1);
+fprintf('  Calculated image distance d2 = %.2f m\n', d2);
+
+% --- 2. Define Ray-Transfer Matrices ---
+% M_d1 is already defined from Task 1 (propagation to lens)
+
+% M_f: Thin lens matrix (Eq. 10) [cite: 80]
+M_f = [
+    1, 0, 0, 0;
+    -1/f, 1, 0, 0;
+    0, 0, 1, 0;
+    0, 0, -1/f, 1
+];
+
+% M_d2: Propagation from lens to image plane (Eq. 7) [cite: 62]
+M_d2 = [
+    1, d2, 0, 0;
+    0, 1, 0, 0;
+    0, 0, 1, d2;
+    0, 0, 0, 1
+];
+
+% --- 3. Propagate Rays in Stages ---
+% Stage 1: Propagate rays from z=0 to the lens at z=d1
+% This is 'rays_out_task1' from before, which we'll call 'rays_at_lens'
+rays_at_lens = rays_out_task1;
+
+% Stage 2: Apply finite lens constraint [cite: 147]
+% Find rays that "miss" the lens (x position > radius)
+% Since y=0, we only need to check the x-position (row 1) [cite: 114]
+x_at_lens = rays_at_lens(1, :);
+% Create a logical index of rays that HIT the lens
+rays_hit_idx = abs(x_at_lens) <= r_lens;
+
+% Stage 3: Transform rays that HIT the lens using M_f
+% Initialize matrix for rays just after the lens
+rays_after_lens = NaN(size(rays_at_lens)); % Use NaNs for rays that miss
+rays_after_lens(:, rays_hit_idx) = M_f * rays_at_lens(:, rays_hit_idx);
+
+% Stage 4: Propagate rays from lens to image plane (z=d1+d2) [cite: 107]
+% Only propagate rays that hit the lens
+rays_final = NaN(size(rays_at_lens)); % Use NaNs for rays that miss
+rays_final(:, rays_hit_idx) = M_d2 * rays_after_lens(:, rays_hit_idx);
+
+% --- 4. Plot Task 2 Results ---
+figure;
+hold on;
+grid on;
+
+% Plot rays in two segments
+for i = 1:N_total_rays
+    % Determine color [cite: 124]
+    if i <= N_rays_per_point
+        color = 'b'; % Blue for x=0
+    else
+        color = 'r'; % Red for x=10mm
+    end
+    
+    % --- Plot Segment 1 (z=0 to z=d1) ---
+    % All rays travel this path
+    z_seg1 = [0, d1];
+    x_seg1 = [rays_in(1, i), rays_at_lens(1, i)];
+    plot(z_seg1, x_seg1, color);
+    
+    % --- Plot Segment 2 (z=d1 to z=d1+d2) ---
+    % Only plot if the ray hit the lens [cite: 143, 147]
+    if rays_hit_idx(i)
+        z_seg2 = [d1, d1 + d2];
+        x_seg2 = [rays_after_lens(1, i), rays_final(1, i)];
+        plot(z_seg2, x_seg2, color);
+    end
+end
+
+% Draw the finite lens at z=d1 [cite: 142]
+plot([d1, d1], [-r_lens, r_lens], 'k-', 'LineWidth', 3);
+
+title('Task 2: Ray Propagation Through a Finite Lens (f=150mm)');
+xlabel('z (m)');
+ylabel('x (m)');
+% Set axis limits to clearly show convergence [cite: 146]
+xlim([0, d1 + d2 + 0.1]); 
+ylim_max = max(abs(rays_at_lens(1,:))) * 1.1; % Get max height at lens
+ylim([-ylim_max, ylim_max]);
+
+hold off;
+
+disp('Part 1 tasks complete. Ready to publish.');

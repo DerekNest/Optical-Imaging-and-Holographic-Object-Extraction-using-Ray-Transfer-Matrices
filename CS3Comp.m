@@ -1,0 +1,190 @@
+%% ESE 105 – Case Study 3 – Scientific Autofocus (v6 – fully corrected)
+
+clear; clc; close all;
+
+set(0, 'defaultFigureColor', 'w');    % Set figure background to white
+set(0, 'defaultAxesColor', 'none');   % Set axes background to transparent
+set(0, 'defaultAxesXColor', 'k');   % Set all axis lines/ticks to black
+set(0, 'defaultAxesYColor', 'k');
+set(0, 'defaultAxesZColor', 'k');
+set(0, 'defaultTextColor', 'k');   
+%To determine the optimal distance $d_2$, the algorithm utilizes a contrast maximization approach. The focus metric is defined as the standard deviation of the pixel intensities within the generated image: score = std(image_pixels). A focused image contains sharp edges and distinct features, resulting in a wide distribution of pixel intensities (high contrast) and a large standard deviation1111. Conversely, a defocused image is characterized by 'blur,' where light from different source points mixes, averaging out intensity differences and reducing the standard deviation
+%Additionally, the algorithm implements a dynamic sensor width adjustment2222. As the image plane moves, the magnification changes. Instead of using a fixed sensor size, which might crop the object or capture too much empty space, the sensor width is dynamically scaled to $6\sigma$ (six standard deviations) of the ray distribution. This ensures the object remains fully framed with high resolution throughout the search process.
+
+%% --- Load Data ---
+fprintf("Loading lightField.mat...\n");
+data = load("lightField.mat");
+rays_in = data.rays;
+clear data;
+
+fprintf("Loaded %.2f million rays\n", size(rays_in,2)/1e6);
+
+
+%% --- System Parameters ---
+f = 0.1;   % 100 mm lens
+N_coarse = 200;   % more samples → stable peak
+N_fine   = 100;
+
+d2_coarse_range = linspace(0.08, 0.20, N_coarse);
+scores_coarse = zeros(size(d2_coarse_range));
+
+Npix_coarse = 200;
+Npix_fine   = 400;
+
+%% --- Lens Matrix ---
+M_f = [
+    1 0 0 0;
+    -1/f 1 0 0;
+    0 0 1 0;
+    0 0 -1/f 1
+];
+
+%% ========== COARSE SEARCH ==========
+fprintf("\nStarting COARSE search...\n");
+h = waitbar(0,"Coarse autofocus...");
+
+for i = 1:length(d2_coarse_range)
+    d2 = d2_coarse_range(i);
+
+    waitbar(i/length(d2_coarse_range), h, ...
+        sprintf("Coarse: d2 = %.2f mm", 1000*d2));
+
+    % free-space propagation
+    M_d2 = [1 d2 0 0; 0 1 0 0; 0 0 1 d2; 0 0 0 1];
+    M_tot = M_d2 * M_f;
+
+    rays_out = M_tot * rays_in;
+
+    x = rays_out(1,:);
+    y = rays_out(3,:);
+
+    % ---- Center ----
+    xc = x - mean(x, "omitnan");
+    yc = y - mean(y, "omitnan");
+
+    % ---- Remove invalid ----
+    valid = isfinite(xc) & isfinite(yc);
+    threshold = 3; % number of standard deviations
+    valid = valid & (abs(xc) < threshold*std(xc,"omitnan")) & ...
+                    (abs(yc) < threshold*std(yc,"omitnan"));
+    xc = xc(valid);
+    yc = yc(valid);
+
+    % ---- Robust width ----
+    sx = std(xc, "omitnan");
+    sy = std(yc, "omitnan");
+    dynamic_width = 4 * max(sx, sy);  
+    dynamic_width = max(dynamic_width, 1e-3); % prevent collapse
+
+    % ---- Image ----
+    [img,~,~] = rays2img(xc, yc, dynamic_width, Npix_coarse);
+
+    img_double = double(img);
+    [Gx, Gy] = gradient(img_double);
+    scores_coarse(i) = sum(sqrt(Gx(:).^2 + Gy(:).^2), "omitnan");
+end
+
+%close(h);
+fprintf("Coarse search done.\n");
+
+% peak
+[~,idx] = max(scores_coarse);
+d2_peak = d2_coarse_range(idx);
+fprintf("Coarse focus peak near d2 = %.3f mm\n", d2_peak*1000);
+
+figure;
+plot(d2_coarse_range*1000, scores_coarse, 'b','LineWidth',1.5);
+hold on;
+plot(d2_peak*1000, scores_coarse(idx), 'r*', 'MarkerSize', 12);
+xlabel("d2 (mm)"); ylabel("Score (std)"); grid on;
+
+%% ========== FINE SEARCH ==========
+fprintf("\nStarting FINE search...\n");
+
+step = (d2_coarse_range(2)-d2_coarse_range(1));
+d2_fine_range = linspace(d2_peak - step, d2_peak + step, N_fine);
+scores_fine = zeros(size(d2_fine_range));
+
+%h = waitbar(0,"Fine autofocus...");
+
+for i = 1:length(d2_fine_range)
+    d2 = d2_fine_range(i);
+
+    %waitbar(i/length(d2_fine_range), h, ...
+        %sprintf("Fine: d2 = %.3f mm", 1000*d2));
+
+    M_d2 = [1 d2 0 0; 0 1 0 0; 0 0 1 d2; 0 0 0 1];
+    M_tot = M_d2 * M_f;
+
+    rays_out = M_tot * rays_in;
+
+    x = rays_out(1,:);
+    y = rays_out(3,:);
+
+    % center
+    xc = x - mean(x,"omitnan");
+    yc = y - mean(y,"omitnan");
+
+    % remove invalid
+    valid = isfinite(xc) & isfinite(yc);
+    xc = xc(valid);
+    yc = yc(valid);
+
+    % robust width
+    sx = std(xc,"omitnan");
+    sy = std(yc,"omitnan");
+    dynamic_width = 6 * max(sx, sy);
+    dynamic_width = max(dynamic_width, 5e-4);
+
+    [img,~,~] = rays2img(xc, yc, dynamic_width, Npix_fine);
+    scores_fine(i) = std(double(img(:)), "omitnan");
+end
+
+%close(h);
+fprintf("Fine search complete.\n");
+
+[~,idx2] = max(scores_fine);
+d2_final = d2_fine_range(idx2);
+
+fprintf("\n*** FINAL FOCUS = %.3f mm ***\n", d2_final*1000);
+
+figure;
+plot(d2_fine_range*1000, scores_fine,'b','LineWidth',1.5);
+hold on;
+plot(d2_final*1000, scores_fine(idx2),'r*','MarkerSize',12);
+xlabel("d2 (mm)"); ylabel("Score (std)"); grid on;
+
+%% ========== FINAL HIGH-RES IMAGE ==========
+fprintf("Rendering final high-resolution image...\n");
+
+M_d2 = [1 d2_final 0 0; 0 1 0 0; 0 0 1 d2_final; 0 0 0 1];
+M_tot = M_d2 * M_f;
+
+rays_out = M_tot * rays_in;
+
+x = rays_out(1,:);
+y = rays_out(3,:);
+
+xc = x - mean(x,"omitnan");
+yc = y - mean(y,"omitnan");
+
+valid = isfinite(xc) & isfinite(yc);
+xc = xc(valid);
+yc = yc(valid);
+
+sx = std(xc,"omitnan");
+sy = std(yc,"omitnan");
+dynamic_width = 6 * max(sx, sy);
+dynamic_width = max(dynamic_width, 5e-4);
+
+[img_final, X_final, Y_final] = rays2img(xc, yc, dynamic_width, 500);
+% After getting img_final:
+
+figure;
+imagesc(X_final, Y_final, img_final);
+colormap gray; 
+axis image;
+shading interp; % Smooth pixel boundaries
+title(sprintf("Final Image (d2 = %.3f mm, f = %.1f mm)", d2_final*1000, f*1000));
+xlabel('x (mm)'); ylabel('y (mm)');
+colorbar;
