@@ -26,10 +26,13 @@ The three objects hidden in the light field:
 <table>
   <tr>
     <td align="center"><b>Left Object</b><br>WashU Crest</td>
+    <td align="center"><b>Center Object</b><br>Bruno Sinopoli</td>
     <td align="center"><b>Right Object</b><br>Boston Dynamics Robot</td>
+    
   </tr>
   <tr>
     <td><img src="Left_Object.png" width="300"/></td>
+    <td><img src="Center_Object.png" width="300"/></td>
     <td><img src="Right_Object.png" width="300"/></td>
   </tr>
 </table>
